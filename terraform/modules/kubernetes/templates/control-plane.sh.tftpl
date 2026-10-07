@@ -1,0 +1,51 @@
+${common}
+
+TOKEN=$(curl -fsS -X PUT \
+  http://169.254.169.254/latest/api/token \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')
+PRIVATE_IP=$(curl -fsS \
+  -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/local-ipv4)
+PUBLIC_IP=$(curl -fsS \
+  -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/public-ipv4)
+cat >/root/kubeadm.yaml <<EOF
+apiVersion: ${kubeadm_api_version}
+kind: InitConfiguration
+localAPIEndpoint:
+  advertiseAddress: "${api_private_ip}"
+  bindPort: ${api_port}
+nodeRegistration:
+  kubeletExtraArgs:
+  - name: cloud-provider
+    value: external
+  - name: provider-id
+    value: "$PROVIDER_ID"
+---
+apiVersion: ${kubeadm_api_version}
+kind: ClusterConfiguration
+controlPlaneEndpoint: "${api_private_ip}:${api_port}"
+kubernetesVersion: "$(kubeadm version -o short)"
+clusterName: "${cluster_name}"
+networking:
+  podSubnet: "${pod_cidr}"
+  serviceSubnet: "${service_cidr}"
+apiServer:
+  certSANs: ["${api_private_ip}", "$PRIVATE_IP", "$PUBLIC_IP"]
+controllerManager:
+  extraArgs:
+  - name: cloud-provider
+    value: external
+EOF
+kubeadm init --config /root/kubeadm.yaml
+mkdir -p /root/.kube /home/ubuntu/.kube
+cp /etc/kubernetes/admin.conf /root/.kube/config
+cp /etc/kubernetes/admin.conf /home/ubuntu/.kube/config
+chown -R ubuntu:ubuntu /home/ubuntu/.kube
+
+REGION=$(curl -fsS \
+  -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/placement/region)
+kubeadm token create --ttl '${join_token_ttl}' --print-join-command >/root/join-command
+aws ssm put-parameter --region "$REGION" --name "/${cluster_name}/join-command" --type SecureString --value "$(cat /root/join-command)" --overwrite
+aws ssm put-parameter --region "$REGION" --name "/${cluster_name}/kubeconfig" --type SecureString --tier Advanced --value "$(cat /etc/kubernetes/admin.conf)" --overwrite

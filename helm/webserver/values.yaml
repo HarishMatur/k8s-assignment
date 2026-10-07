@@ -1,0 +1,27 @@
+replicaCount: 1
+image:
+  repository: nginx
+  tag: "1.27-alpine"
+  pullPolicy: IfNotPresent
+service:
+  type: LoadBalancer
+  port: 80
+  annotations:
+    service.beta.kubernetes.io/aws-load-balancer-type: nlb
+    service.beta.kubernetes.io/aws-load-balancer-scheme: internet-facing
+persistence:
+  enabled: true
+  storageClass: ebs-gp3
+  accessMode: ReadWriteOnce
+  size: 2Gi
+resources:
+  requests: { cpu: 100m, memory: 64Mi }
+  limits: { cpu: 500m, memory: 256Mi }
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+candidate:
+  name: "Harish Matur"
+  architecture: "Self-managed kubeadm cluster on AWS EC2 with Calico VXLAN, AWS CCM, EBS CSI and Helm."

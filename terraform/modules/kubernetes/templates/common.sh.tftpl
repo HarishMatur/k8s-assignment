@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
+
+TOKEN=$(curl -fsS -X PUT http://169.254.169.254/latest/api/token \
+  -H 'X-aws-ec2-metadata-token-ttl-seconds: 21600')
+INSTANCE_ID=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/instance-id)
+INSTANCE_AZ=$(curl -fsS -H "X-aws-ec2-metadata-token: $TOKEN" \
+  http://169.254.169.254/latest/meta-data/placement/availability-zone)
+PROVIDER_ID="aws:///$INSTANCE_AZ/$INSTANCE_ID"
+
+swapoff -a
+sed -i '/ swap / s/^/#/' /etc/fstab
+cat >/etc/modules-load.d/k8s.conf <<EOF
+overlay
+br_netfilter
+EOF
+modprobe overlay
+modprobe br_netfilter
+cat >/etc/sysctl.d/99-kubernetes-cri.conf <<EOF
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOF
+sysctl --system
+
+apt-get update
+apt-get install -y apt-transport-https ca-certificates curl gpg unzip '${containerd_package}' conntrack
+
+if ! command -v aws >/dev/null 2>&1; then
+  curl -fsSL '${aws_cli_url}' -o /tmp/awscliv2.zip
+  unzip -q /tmp/awscliv2.zip -d /tmp
+  /tmp/aws/install
+  rm -rf /tmp/aws /tmp/awscliv2.zip
+fi
+mkdir -p /etc/containerd
+containerd config default >/etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd
+
+mkdir -p /etc/apt/keyrings
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v${kubernetes_version}/deb/Release.key | gpg --batch --yes --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v${kubernetes_version}/deb/ /" >/etc/apt/sources.list.d/kubernetes.list
+apt-get update
+%{ if kubernetes_package_version != null ~}
+apt-get install -y 'kubelet=${kubernetes_package_version}' 'kubeadm=${kubernetes_package_version}' 'kubectl=${kubernetes_package_version}'
+%{ else ~}
+apt-get install -y kubelet kubeadm kubectl
+%{ endif ~}
+apt-mark hold kubelet kubeadm kubectl

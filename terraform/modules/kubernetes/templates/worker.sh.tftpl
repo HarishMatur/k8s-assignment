@@ -1,0 +1,27 @@
+${common}
+
+echo "KUBELET_EXTRA_ARGS=--cloud-provider=external --provider-id=$PROVIDER_ID" >/etc/default/kubelet
+
+if [ -s /etc/kubernetes/kubelet.conf ]; then
+  echo 'Worker already has Kubernetes configuration; not joining again.'
+  exit 0
+fi
+
+for attempt in $(seq 1 ${join_attempts}); do
+  echo "Worker join attempt $attempt of ${join_attempts}"
+  JOIN=$(aws ssm get-parameter --region "${aws_region}" --name "/${cluster_name}/join-command" --with-decryption --query Parameter.Value --output text || true)
+  if [ -n "$JOIN" ] && [ "$JOIN" != "None" ]; then
+    if bash -c "$JOIN"; then
+      echo 'Worker joined successfully.'
+      exit 0
+    fi
+    if [ -s /etc/kubernetes/kubelet.conf ]; then
+      echo 'Join partially completed; inspect kubelet logs before retrying. No reset performed.' >&2
+      exit 1
+    fi
+    echo 'Join failed; waiting for a fresh SSM command or reachable control plane.' >&2
+  fi
+  sleep ${join_retry_seconds}
+done
+echo "Worker join retries exhausted; inspect /var/log/cloud-init-output.log" >&2
+exit 1

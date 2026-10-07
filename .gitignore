@@ -1,0 +1,11 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+terraform.tfvars
+kubeconfig
+kubeconfig.bak
+.kubeconfig.*
+.DS_Store
+tfplan
+evidence/
